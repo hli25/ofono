@@ -151,8 +151,18 @@ static void connection_destroy(gpointer data)
 static gboolean io_hup_cb(GIOChannel *io, GIOCondition cond, gpointer data)
 {
 	char *device = data;
+	int fd = g_io_channel_unix_get_fd(io);
+	char *key = g_strdup_printf("%s-%d", device, fd);
+	gpointer connwatch_id = g_hash_table_lookup(connection_hash, key);
 
 	DBG("Remove %s", device);
+
+	if (connwatch_id != NULL) {
+		g_source_remove(GPOINTER_TO_UINT(connwatch_id));
+		g_hash_table_remove(connection_hash, key);
+	}
+
+	g_free(key);
 
 	g_hash_table_remove(connection_hash, device);
 
@@ -166,6 +176,7 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 	const char *device;
 	GIOChannel *io;
 	int fd, fd_dup;
+	guint connwatch_id;
 	struct sockaddr_rc saddr;
 	socklen_t optlen;
 	struct ofono_emulator *em;
@@ -249,9 +260,11 @@ static DBusMessage *profile_new_connection(DBusConnection *conn,
 
 	fd_dup = dup(fd);
 	io = g_io_channel_unix_new(fd_dup);
-	g_io_add_watch_full(io, G_PRIORITY_DEFAULT, G_IO_HUP, io_hup_cb,
-						g_strdup(device), g_free);
+	connwatch_id = g_io_add_watch_full(io, G_PRIORITY_DEFAULT, G_IO_HUP | G_IO_NVAL,
+						io_hup_cb, g_strdup(device), g_free);
 	g_io_channel_unref(io);
+	g_hash_table_insert(connection_hash, g_strdup_printf("%s-%d", device, fd_dup),
+						GUINT_TO_POINTER(connwatch_id));
 
 	card = ofono_handsfree_card_create(0,
 					OFONO_HANDSFREE_CARD_TYPE_GATEWAY,
